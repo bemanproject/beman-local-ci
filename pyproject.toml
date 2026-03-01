@@ -6,7 +6,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "beman-local-ci"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run Beman CI matrix locally via Docker"
 readme = "README.md"
 requires-python = ">=3.12"
