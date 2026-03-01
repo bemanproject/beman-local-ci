@@ -95,6 +95,12 @@ Examples:
         help="Show detailed output for all jobs",
     )
 
+    parser.add_argument(
+        "--track-performance",
+        action="store_true",
+        help="Report peak CPU and memory usage for each job",
+    )
+
     return parser
 
 
@@ -160,6 +166,7 @@ def main() -> int:
         max_parallel=args.parallel,
         verbose=args.verbose,
         dry_run=args.dry_run,
+        track_performance=args.track_performance,
     )
 
     return exit_code

@@ -44,6 +44,81 @@ def _kill_all_containers() -> None:
             pass
 
 
+class _StatsCollector:
+    """Polls ``docker stats`` in a background thread, tracking peak values."""
+
+    def __init__(self, cidfile: Path):
+        self.cidfile = cidfile
+        self.peak_cpu_percent = 0.0
+        self.peak_memory_mib = 0.0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    # ── internals ─────────────────────────────────────────────────────────
+
+    def _poll(self) -> None:
+        while not self._stop.is_set():
+            try:
+                cid = self.cidfile.read_text().strip()
+                if not cid:
+                    self._stop.wait(0.5)
+                    continue
+                result = subprocess.run(
+                    [
+                        "docker",
+                        "stats",
+                        "--no-stream",
+                        "--format",
+                        "{{.CPUPerc}}\t{{.MemUsage}}",
+                        cid,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    start_new_session=True,
+                )
+                if result.returncode == 0:
+                    self._parse(result.stdout.strip())
+            except Exception:
+                pass
+            self._stop.wait(1)
+
+    def _parse(self, line: str) -> None:
+        parts = line.split("\t")
+        if len(parts) < 2:
+            return
+        try:
+            cpu = float(parts[0].rstrip("%"))
+            self.peak_cpu_percent = max(self.peak_cpu_percent, cpu)
+        except ValueError:
+            pass
+        try:
+            mem_str = parts[1].split("/")[0].strip()
+            self.peak_memory_mib = max(
+                self.peak_memory_mib, self._parse_mem(mem_str)
+            )
+        except (ValueError, IndexError):
+            pass
+
+    @staticmethod
+    def _parse_mem(s: str) -> float:
+        """Parse a Docker memory string (e.g. '1.23GiB') to MiB."""
+        s = s.strip()
+        for suffix, factor in (("GiB", 1024), ("MiB", 1), ("KiB", 1 / 1024)):
+            if s.endswith(suffix):
+                return float(s[: -len(suffix)]) * factor
+        if s.endswith("B"):
+            return float(s[:-1]) / (1024 * 1024)
+        return 0.0
+
+
 @dataclass
 class JobResult:
     """Result of running a CI job."""
@@ -53,6 +128,8 @@ class JobResult:
     duration_secs: float
     output: str
     return_code: int
+    peak_cpu_percent: float | None = None
+    peak_memory_mib: float | None = None
 
 
 def run_job(
@@ -61,6 +138,7 @@ def run_job(
     build_jobs: int,
     verbose: bool = False,
     dry_run: bool = False,
+    track_performance: bool = False,
 ) -> JobResult:
     """
     Execute a single CI job.
@@ -105,6 +183,7 @@ def run_job(
 
     start_time = time.time()
     proc: "subprocess.Popen[str] | None" = None
+    collector: _StatsCollector | None = None
 
     try:
         proc = subprocess.Popen(
@@ -117,6 +196,10 @@ def run_job(
 
         with _active_procs_lock:
             _active_procs.add((cidfile, proc))
+
+        if track_performance:
+            collector = _StatsCollector(cidfile)
+            collector.start()
 
         try:
             stdout, stderr = proc.communicate(timeout=1800)  # 30 minute timeout
@@ -135,12 +218,22 @@ def run_job(
         if stderr:
             output += "\n" + stderr
 
+        peak_cpu = None
+        peak_mem = None
+        if collector is not None:
+            collector.stop()
+            peak_cpu = collector.peak_cpu_percent
+            peak_mem = collector.peak_memory_mib
+            collector = None
+
         return JobResult(
             job=job,
             success=proc.returncode == 0,
             duration_secs=time.time() - start_time,
             output=output,
             return_code=proc.returncode,
+            peak_cpu_percent=peak_cpu,
+            peak_memory_mib=peak_mem,
         )
 
     except Exception as e:
@@ -153,10 +246,19 @@ def run_job(
         )
 
     finally:
+        if collector is not None:
+            collector.stop()
         if proc is not None:
             with _active_procs_lock:
                 _active_procs.discard((cidfile, proc))
         cidfile.unlink(missing_ok=True)
+
+
+def _format_memory(mib: float) -> str:
+    """Format MiB as a human-readable string."""
+    if mib >= 1024:
+        return f"{mib / 1024:.1f} GiB"
+    return f"{mib:.0f} MiB"
 
 
 def print_job_status(result: JobResult, verbose: bool = False) -> None:
@@ -164,7 +266,14 @@ def print_job_status(result: JobResult, verbose: bool = False) -> None:
     status = "✓ PASS" if result.success else "✗ FAIL"
     duration_str = f"{result.duration_secs:.1f}s"
 
-    print(f"{status} [{duration_str}] {result.job}")
+    perf = ""
+    if result.peak_memory_mib is not None:
+        perf = (
+            f"  [peak: {_format_memory(result.peak_memory_mib)} mem, "
+            f"{result.peak_cpu_percent:.0f}% cpu]"
+        )
+
+    print(f"{status} [{duration_str}] {result.job}{perf}")
 
     if verbose or not result.success:
         # Print output for failed jobs or when verbose
@@ -196,6 +305,7 @@ def run_jobs(
     max_parallel: int | None = None,
     verbose: bool = False,
     dry_run: bool = False,
+    track_performance: bool = False,
 ) -> int:
     """
     Run CI jobs in parallel.
@@ -207,6 +317,7 @@ def run_jobs(
         max_parallel: Maximum number of jobs to run in parallel (None = unlimited)
         verbose: Print detailed output
         dry_run: Print commands without executing
+        track_performance: Poll docker stats and report peak CPU/memory per job
 
     Returns:
         Exit code: 0 if all passed, 1 if any failed, 130 if interrupted (Ctrl-C)
@@ -229,7 +340,9 @@ def run_jobs(
     executor = ThreadPoolExecutor(max_workers=max_workers)
 
     future_to_job = {
-        executor.submit(run_job, job, repo_path, build_jobs, verbose, dry_run): job
+        executor.submit(
+            run_job, job, repo_path, build_jobs, verbose, dry_run, track_performance
+        ): job
         for job in jobs
     }
 
