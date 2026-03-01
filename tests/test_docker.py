@@ -2,6 +2,7 @@
 """Tests for Docker command construction."""
 
 import json
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -123,6 +124,11 @@ def test_build_docker_command():
     assert cmd[0] == "docker"
     assert cmd[1] == "run"
     assert "--rm" in cmd
+
+    # Check --user uid:gid
+    assert "--user" in cmd
+    user_idx = cmd.index("--user")
+    assert cmd[user_idx + 1] == f"{os.getuid()}:{os.getgid()}"
 
     # Check volume mounts
     assert "-v" in cmd

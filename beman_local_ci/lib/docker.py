@@ -192,6 +192,8 @@ def build_docker_command(
         "docker",
         "run",
         "--rm",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
         *platform_args,
         "-v",
         f"{repo_path}:/src:ro",
