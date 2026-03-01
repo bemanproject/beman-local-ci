@@ -374,6 +374,38 @@ def test_auto_parallelism_minimum_one(
 @patch("beman_local_ci.cli.check_docker")
 @patch("beman_local_ci.cli.get_jobs_from_repo")
 @patch("beman_local_ci.cli.run_jobs")
+@patch(
+    "beman_local_ci.cli.get_docker_memory_bytes",
+    return_value=int(11.67 * GIB),  # Docker Desktop "12 GB" slider → 11.67 GiB reported
+)
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(32 * GIB))
+def test_auto_parallelism_docker_desktop_overhead(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """11.67 GiB (Docker Desktop '12 GB') → parallelism 2 thanks to fudge factor."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["max_parallel"] == 2
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
 @patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=None)
 @patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(32 * GIB))
 def test_auto_parallelism_docker_unavailable(

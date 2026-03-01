@@ -145,11 +145,16 @@ def main() -> int:
     # Resolve auto-parallelism from Docker memory.
     GIB = 1024**3
     MEMORY_PER_CONTAINER_GIB = 5.9
+    # Docker Desktop reserves overhead from the configured value (e.g.
+    # slider set to 12 GB → 11.67 GiB reported).  A small fudge avoids
+    # penalising users who set exactly the recommended amount.
+    DOCKER_OVERHEAD_GIB = 0.5
 
     if args.parallel == "auto":
         docker_mem = get_docker_memory_bytes()
         if docker_mem is not None:
-            parallelism = max(1, math.floor(docker_mem / (MEMORY_PER_CONTAINER_GIB * GIB)))
+            effective_gib = docker_mem / GIB + DOCKER_OVERHEAD_GIB
+            parallelism = max(1, math.floor(effective_gib / MEMORY_PER_CONTAINER_GIB))
             args.parallel = parallelism
 
             system_mem = get_system_memory_bytes()
