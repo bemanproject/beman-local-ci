@@ -2,6 +2,8 @@
 """Parallel job execution and result reporting."""
 
 import subprocess
+import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -10,6 +12,36 @@ from pathlib import Path
 from beman_local_ci.lib.config import resolve_config
 from beman_local_ci.lib.docker import build_docker_command, create_build_dir
 from beman_local_ci.lib.matrix import CIJob
+
+# Thread-safe registry of (cidfile, Popen) for every container currently running.
+# Populated by run_job; read by _kill_all_containers on Ctrl-C.
+_active_procs_lock = threading.Lock()
+_active_procs: set[tuple[Path, "subprocess.Popen[str]"]] = set()
+
+
+def _kill_all_containers() -> None:
+    """
+    SIGKILL every Docker container that is currently being tracked.
+
+    For each active job we:
+      1. Read the container ID from its --cidfile and run `docker kill -s KILL`.
+      2. Also kill the docker-CLI subprocess directly, in case the cidfile was
+         not yet written (i.e. the container had not fully started).
+    """
+    with _active_procs_lock:
+        active = list(_active_procs)
+
+    for cidfile, proc in active:
+        try:
+            cid = cidfile.read_text().strip()
+            if cid:
+                subprocess.run(
+                    ["docker", "kill", "--signal", "KILL", cid],
+                    capture_output=True,
+                    timeout=5,
+                )
+        except Exception:
+            pass
 
 
 @dataclass
@@ -59,50 +91,71 @@ def run_job(
             return_code=0,
         )
 
+    # Create the cidfile path without actually creating the file; Docker writes
+    # the container ID to it once the container starts, and refuses to run if
+    # the file already exists.
+    tmp = tempfile.NamedTemporaryFile(suffix=".cid", delete=False)
+    cidfile = Path(tmp.name)
+    tmp.close()
+    cidfile.unlink()
+
+    # Inject --cidfile right after --rm so we can identify the container later.
+    rm_idx = cmd.index("--rm")
+    cmd = cmd[: rm_idx + 1] + ["--cidfile", str(cidfile)] + cmd[rm_idx + 1 :]
+
     start_time = time.time()
+    proc: "subprocess.Popen[str] | None" = None
 
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=1800,  # 30 minute timeout
         )
 
-        duration = time.time() - start_time
-        success = result.returncode == 0
+        with _active_procs_lock:
+            _active_procs.add((cidfile, proc))
 
-        # Combine stdout and stderr
-        output = result.stdout
-        if result.stderr:
-            output += "\n" + result.stderr
+        try:
+            stdout, stderr = proc.communicate(timeout=1800)  # 30 minute timeout
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            return JobResult(
+                job=job,
+                success=False,
+                duration_secs=time.time() - start_time,
+                output="Job timed out after 30 minutes",
+                return_code=-1,
+            )
+
+        output = stdout
+        if stderr:
+            output += "\n" + stderr
 
         return JobResult(
             job=job,
-            success=success,
-            duration_secs=duration,
+            success=proc.returncode == 0,
+            duration_secs=time.time() - start_time,
             output=output,
-            return_code=result.returncode,
+            return_code=proc.returncode,
         )
 
-    except subprocess.TimeoutExpired:
-        duration = time.time() - start_time
-        return JobResult(
-            job=job,
-            success=False,
-            duration_secs=duration,
-            output="Job timed out after 30 minutes",
-            return_code=-1,
-        )
     except Exception as e:
-        duration = time.time() - start_time
         return JobResult(
             job=job,
             success=False,
-            duration_secs=duration,
+            duration_secs=time.time() - start_time,
             output=f"Error running job: {e}",
             return_code=-1,
         )
+
+    finally:
+        if proc is not None:
+            with _active_procs_lock:
+                _active_procs.discard((cidfile, proc))
+        cidfile.unlink(missing_ok=True)
 
 
 def print_job_status(result: JobResult, verbose: bool = False) -> None:
@@ -155,7 +208,7 @@ def run_jobs(
         dry_run: Print commands without executing
 
     Returns:
-        Exit code: 0 if all jobs passed, 1 if any failed
+        Exit code: 0 if all passed, 1 if any failed, 130 if interrupted (Ctrl-C)
     """
     if not jobs:
         print("No jobs to run")
@@ -168,26 +221,28 @@ def run_jobs(
 
     results: list[JobResult] = []
 
-    # Use ThreadPoolExecutor for parallel execution
-    # I/O-bound tasks (waiting on Docker) benefit from threads
+    # Use ThreadPoolExecutor for parallel execution.
+    # Manage the executor manually (not as a context manager) so we can call
+    # shutdown(cancel_futures=True) on Ctrl-C without waiting for the threads.
     max_workers = max_parallel if max_parallel else len(jobs)
+    executor = ThreadPoolExecutor(max_workers=max_workers)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all jobs
-        future_to_job = {
-            executor.submit(run_job, job, repo_path, build_jobs, verbose, dry_run): job
-            for job in jobs
-        }
+    future_to_job = {
+        executor.submit(run_job, job, repo_path, build_jobs, verbose, dry_run): job
+        for job in jobs
+    }
 
-        # Process results as they complete
+    try:
         for future in as_completed(future_to_job):
             result = future.result()
             results.append(result)
             print_job_status(result, verbose)
+    except KeyboardInterrupt:
+        print("\nInterrupted — killing running containers...")
+        _kill_all_containers()
+        executor.shutdown(wait=False, cancel_futures=True)
+        return 130
 
-    # Print summary
+    executor.shutdown(wait=False)
     print_summary(results)
-
-    # Return exit code
-    any_failed = any(not r.success for r in results)
-    return 1 if any_failed else 0
+    return 1 if any(not r.success for r in results) else 0
