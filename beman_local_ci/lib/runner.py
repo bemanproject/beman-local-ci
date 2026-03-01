@@ -240,8 +240,8 @@ def run_jobs(
             print_job_status(result, verbose)
     except KeyboardInterrupt:
         print("\nInterrupted — killing running containers...")
-        _kill_all_containers()
         executor.shutdown(wait=False, cancel_futures=True)
+        _kill_all_containers()
         return 130
 
     executor.shutdown(wait=False)
