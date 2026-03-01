@@ -15,7 +15,7 @@ uv pip install -e .
 beman-local-ci -C /path/to/repo
 
 # Run with filters
-beman-local-ci -C /path/to/repo --compiler gcc --versions 15
+beman-local-ci -C /path/to/repo --compiler gcc --cxxversions c++26
 
 # Dry run to see what would be executed
 beman-local-ci -C /path/to/repo --dry-run
@@ -31,8 +31,11 @@ beman-local-ci -C /path/to/repo -j 8 -p 4
 - `-p N`: Max parallel CI jobs (default: auto based on Docker memory, use `all` for unlimited)
 - `--dry-run`: Print commands without executing
 - `--verbose`: Show detailed output
-- `--compiler COMPILER`: Filter by compiler (gcc, clang)
-- `--versions V1,V2`: Filter by versions
-- `--cxxversions V1,V2`: Filter by C++ versions
+- `--compiler C1,C2`: Filter by compiler (starts a new filter group)
+- `--versions V1,V2`: Filter by compiler versions
+- `--cxxversions V1,V2`: Filter by C++ standard versions
 - `--stdlibs S1,S2`: Filter by standard libraries
 - `--tests T1,T2`: Filter by test types
+
+All filter dimensions are independent — omitted dimensions match all values.
+Multiple `--compiler` flags create OR groups; dimensions within a group are ANDed.

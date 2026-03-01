@@ -188,7 +188,7 @@ def test_main_invalid_filter(mock_get_jobs, mock_check_docker, capsys):
             "beman-local-ci",
             "-C",
             "/workspace/beman-submodules/exemplar",
-            "--versions",
+            "--bogus",
             "15",
         ],
     ):

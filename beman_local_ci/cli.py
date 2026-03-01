@@ -23,25 +23,31 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run Beman CI matrix locally via Docker",
         epilog="""
-Filter syntax:
-  --compiler COMPILER       Filter by compiler (gcc, clang)
-  --versions V1,V2          Filter by compiler versions (must follow --compiler)
-  --cxxversions V1,V2       Filter by C++ versions (must follow --versions)
-  --stdlibs S1,S2           Filter by standard libraries (must follow --versions)
-  --tests T1,T2             Filter by test types (must follow --versions)
+Filter syntax (all dimensions are independent — omitted ones match all):
+  --compiler C1,C2          Filter by compiler (gcc, clang). Starts a new filter group.
+  --versions V1,V2          Filter by compiler versions
+  --cxxversions V1,V2       Filter by C++ standard versions
+  --stdlibs S1,S2           Filter by standard libraries
+  --tests T1,T2             Filter by test types
+
+  Multiple --compiler flags create OR groups. Within a group, dimensions are ANDed.
+  Flags before the first --compiler create an implicit group (all compilers).
 
 Examples:
   # Run all jobs
   beman-local-ci -C /path/to/repo
 
-  # Run only gcc 15 jobs
-  beman-local-ci -C /path/to/repo --compiler gcc --versions 15
+  # Run only gcc jobs
+  beman-local-ci -C /path/to/repo --compiler gcc
 
-  # Run clang 21 with libc++ and Debug builds
-  beman-local-ci -C /path/to/repo --compiler clang --versions 21 --stdlibs libc++ --tests Debug.Default
+  # Run only c++26 jobs (any compiler)
+  beman-local-ci -C /path/to/repo --cxxversions c++26
 
-  # Run multiple compiler/version combinations
-  beman-local-ci --compiler gcc --versions 15,14 --compiler clang --versions 21
+  # Run gcc 15 c++26 jobs
+  beman-local-ci -C /path/to/repo --compiler gcc --versions 15 --cxxversions c++26
+
+  # Run gcc 15 OR clang 21 libc++ jobs
+  beman-local-ci --compiler gcc --versions 15 --compiler clang --versions 21 --stdlibs libc++
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
