@@ -180,13 +180,13 @@ def main() -> int:
                             f"{needed_gib} GiB to increase default "
                             f"parallelism to {best_p})."
                         )
+                        if platform.system() == "Darwin":
+                            msg += (
+                                "\n  Docker Desktop: Settings > Resources"
+                                " > Memory"
+                            )
                     else:
                         msg = f"Selected parallelism {parallelism}."
-                    if platform.system() == "Darwin":
-                        msg += (
-                            "\n  Docker Desktop: Settings > Resources"
-                            " > Memory"
-                        )
                     print(msg, file=sys.stderr)
         else:
             args.parallel = 2  # fallback when Docker memory can't be queried
