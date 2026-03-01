@@ -1,77 +1,68 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 """CLI filter parsing and job matching."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from beman_local_ci.lib.matrix import CIJob
 
 
 @dataclass
-class VersionFilter:
-    """Filter for a specific set of compiler versions."""
+class FilterGroup:
+    """Flat filter where each dimension is independent.
 
-    versions: list[str]
+    None means "match all" for that dimension.
+    """
+
+    compilers: list[str] | None = None
+    versions: list[str] | None = None
     cxxversions: list[str] | None = None
     stdlibs: list[str] | None = None
     tests: list[str] | None = None
 
     def matches(self, job: CIJob) -> bool:
-        """Check if this version filter matches the job."""
-        # Version must match
-        if job.version not in self.versions:
+        """Check if this filter group matches the job."""
+        if self.compilers is not None and job.compiler not in self.compilers:
             return False
-
-        # Check sub-filters (None means match all)
+        if self.versions is not None and job.version not in self.versions:
+            return False
         if self.cxxversions is not None and job.cxxversion not in self.cxxversions:
             return False
-
         if self.stdlibs is not None and job.stdlib not in self.stdlibs:
             return False
-
         if self.tests is not None and job.test not in self.tests:
             return False
-
         return True
 
 
-@dataclass
-class CompilerFilter:
-    """Filter for a specific compiler."""
-
-    compiler: str
-    version_filters: list[VersionFilter] = field(default_factory=list)
-
-    def matches(self, job: CIJob) -> bool:
-        """Check if this compiler filter matches the job."""
-        # Compiler must match
-        if job.compiler != self.compiler:
-            return False
-
-        # If no version filters, match all versions
-        if not self.version_filters:
-            return True
-
-        # Check if any version filter matches
-        return any(vf.matches(job) for vf in self.version_filters)
+def _parse_comma_values(raw: str, flag: str) -> list[str]:
+    """Split comma-separated values, stripping whitespace. Error if empty."""
+    values = [v.strip() for v in raw.split(",") if v.strip()]
+    if not values:
+        raise ValueError(f"{flag} requires at least one non-empty value")
+    return values
 
 
-def parse_filter_args(args: list[str]) -> list[CompilerFilter]:
+def parse_filter_args(args: list[str]) -> list[FilterGroup]:
     """
-    Parse filter arguments into CompilerFilter objects.
+    Parse filter arguments into FilterGroup objects.
 
-    State machine parser:
-    - --compiler X: start new CompilerFilter
-    - --versions X,Y: start new VersionFilter within current compiler
-    - --cxxversions/--stdlibs/--tests: attach to current version filter
+    Rules:
+    - --compiler X,Y starts a new FilterGroup (OR boundary).
+    - --versions, --cxxversions, --stdlibs, --tests set their field on the
+      current group.
+    - If no --compiler precedes a dimension flag, an implicit group
+      (compilers=None) is created.
+    - Same flag twice in one group: last writer wins.
 
     Returns empty list if no filters specified (match all).
     """
     if not args:
         return []
 
-    filters: list[CompilerFilter] = []
-    current_compiler: CompilerFilter | None = None
-    current_version: VersionFilter | None = None
+    filters: list[FilterGroup] = []
+    current: FilterGroup | None = None
+
+    DIMENSION_FLAGS = ("--versions", "--cxxversions", "--stdlibs", "--tests")
 
     i = 0
     while i < len(args):
@@ -80,50 +71,31 @@ def parse_filter_args(args: list[str]) -> list[CompilerFilter]:
         if arg == "--compiler":
             if i + 1 >= len(args):
                 raise ValueError("--compiler requires a value")
-
-            # Start new compiler filter
-            current_compiler = CompilerFilter(compiler=args[i + 1])
-            filters.append(current_compiler)
-            current_version = None  # Reset version context
+            current = FilterGroup(
+                compilers=_parse_comma_values(args[i + 1], "--compiler")
+            )
+            filters.append(current)
             i += 2
 
-        elif arg == "--versions":
+        elif arg in DIMENSION_FLAGS:
             if i + 1 >= len(args):
-                raise ValueError("--versions requires a value")
-            if current_compiler is None:
-                raise ValueError("--versions must follow --compiler")
+                raise ValueError(f"{arg} requires a value")
+            values = _parse_comma_values(args[i + 1], arg)
 
-            # Start new version filter
-            versions = args[i + 1].split(",")
-            current_version = VersionFilter(versions=versions)
-            current_compiler.version_filters.append(current_version)
-            i += 2
+            # Create implicit group if no --compiler preceded this flag
+            if current is None:
+                current = FilterGroup()
+                filters.append(current)
 
-        elif arg == "--cxxversions":
-            if i + 1 >= len(args):
-                raise ValueError("--cxxversions requires a value")
-            if current_version is None:
-                raise ValueError("--cxxversions must follow --versions")
+            if arg == "--versions":
+                current.versions = values
+            elif arg == "--cxxversions":
+                current.cxxversions = values
+            elif arg == "--stdlibs":
+                current.stdlibs = values
+            elif arg == "--tests":
+                current.tests = values
 
-            current_version.cxxversions = args[i + 1].split(",")
-            i += 2
-
-        elif arg == "--stdlibs":
-            if i + 1 >= len(args):
-                raise ValueError("--stdlibs requires a value")
-            if current_version is None:
-                raise ValueError("--stdlibs must follow --versions")
-
-            current_version.stdlibs = args[i + 1].split(",")
-            i += 2
-
-        elif arg == "--tests":
-            if i + 1 >= len(args):
-                raise ValueError("--tests requires a value")
-            if current_version is None:
-                raise ValueError("--tests must follow --versions")
-
-            current_version.tests = args[i + 1].split(",")
             i += 2
 
         else:
@@ -132,7 +104,7 @@ def parse_filter_args(args: list[str]) -> list[CompilerFilter]:
     return filters
 
 
-def matches_filters(job: CIJob, filters: list[CompilerFilter]) -> bool:
+def matches_filters(job: CIJob, filters: list[FilterGroup]) -> bool:
     """
     Check if a job matches any of the filters.
 
@@ -144,6 +116,6 @@ def matches_filters(job: CIJob, filters: list[CompilerFilter]) -> bool:
     return any(f.matches(job) for f in filters)
 
 
-def filter_jobs(jobs: list[CIJob], filters: list[CompilerFilter]) -> list[CIJob]:
-    """Filter jobs based on CompilerFilter list."""
+def filter_jobs(jobs: list[CIJob], filters: list[FilterGroup]) -> list[CIJob]:
+    """Filter jobs based on FilterGroup list."""
     return [job for job in jobs if matches_filters(job, filters)]

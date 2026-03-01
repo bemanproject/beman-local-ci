@@ -2,6 +2,7 @@
 """Docker command construction and execution."""
 
 import json
+import os
 import platform
 import subprocess
 import tempfile
@@ -37,6 +38,30 @@ def check_docker() -> None:
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("Docker info command timed out. Is Docker daemon running?")
+
+
+def get_docker_memory_bytes() -> int | None:
+    """Return the total memory available to Docker, in bytes."""
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{.MemTotal}}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
+def get_system_memory_bytes() -> int | None:
+    """Return total physical memory in bytes (POSIX only)."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return None
 
 
 def _is_macos_arm64() -> bool:
@@ -113,7 +138,7 @@ cmake --build /build --config {resolved.build_config} --parallel {jobs} --verbos
 echo "::step::header_sets"
 cmake --build /build --config {resolved.build_config} --target all_verify_interface_header_sets
 echo "::step::install"
-cmake --install /build --config {resolved.build_config} --prefix /opt/beman.package
+cmake --install /build --config {resolved.build_config} --prefix /build/stagedir
 echo "::step::test"
 ctest --test-dir /build --build-config {resolved.build_config} --output-on-failure
 echo "::step::done"
@@ -167,6 +192,8 @@ def build_docker_command(
         "docker",
         "run",
         "--rm",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
         *platform_args,
         "-v",
         f"{repo_path}:/src:ro",
@@ -183,25 +210,68 @@ def build_docker_command(
     return cmd
 
 
-def create_build_dir(job: CIJob, base_dir: Path | None = None) -> Path:
+BUILD_CACHE_DIR = Path(tempfile.gettempdir()) / "beman-local-ci"
+
+
+def check_build_cache_ownership() -> str | None:
+    """Check that the build cache dir has no root-owned files.
+
+    Scans up to two levels deep (the job dirs and their immediate children)
+    to detect root-owned entries without walking the entire tree.
+
+    Returns None on success, or an error message string if any
+    root-owned entry is found.
+    """
+    if not BUILD_CACHE_DIR.exists():
+        return None
+
+    uid = os.getuid()
+    root_uid = 0
+
+    # Check the top-level dir itself, then job dirs (depth 1) and their
+    # immediate children (depth 2).
+    dirs_to_scan = [BUILD_CACHE_DIR]
+    for depth, parent in enumerate(dirs_to_scan):
+        try:
+            for entry in parent.iterdir():
+                try:
+                    if entry.stat().st_uid == root_uid and root_uid != uid:
+                        return (
+                            f"Build cache contains root-owned files "
+                            f"(e.g. {entry}).\n"
+                            f"Fix with: sudo rm -rf {BUILD_CACHE_DIR}"
+                        )
+                    # Queue job dirs (depth 0→1) for one more level of scanning.
+                    if depth == 0 and entry.is_dir():
+                        dirs_to_scan.append(entry)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    return None
+
+
+def create_build_dir(job: CIJob, repo_name: str, base_dir: Path | None = None) -> Path:
     """
     Create a unique build directory for a job.
 
     Args:
         job: The CI job
+        repo_name: Repository/project name (used as directory prefix)
         base_dir: Base directory for build dirs (default: system temp)
 
     Returns:
         Path to the created build directory
     """
     if base_dir is None:
-        base_dir = Path(tempfile.gettempdir()) / "beman-local-ci"
+        base_dir = BUILD_CACHE_DIR
 
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create unique dir name from job parameters
+    # Create unique dir name from repo + job parameters
     # Use sanitized names (replace special chars)
-    job_name = f"{job.compiler}-{job.version}-{job.cxxversion}-{job.stdlib}-{job.test}"
+    job_name = f"{repo_name}-{job.compiler}-{job.version}-{job.cxxversion}-{job.stdlib}-{job.test}"
     job_name = job_name.replace("/", "_").replace(" ", "_").replace(":", "_")
 
     build_dir = base_dir / job_name
