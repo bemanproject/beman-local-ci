@@ -22,7 +22,7 @@ def test_parser_defaults():
     args, _ = parser.parse_known_args([])
 
     assert args.directory == Path.cwd()
-    assert args.jobs == os.cpu_count()
+    assert args.jobs == max(1, (os.cpu_count() or 1) // 2)
     assert args.parallel == 2
     assert args.dry_run is False
     assert args.verbose is False

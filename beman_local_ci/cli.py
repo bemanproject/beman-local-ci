@@ -54,8 +54,8 @@ Examples:
         "--jobs",
         metavar="N",
         type=int,
-        default=os.cpu_count(),
-        help="Number of parallel build jobs (default: CPU count)",
+        default=max(1, (os.cpu_count() or 1) // 2),
+        help="Number of parallel build jobs (default: CPU count / 2)",
     )
 
     def parallel_type(value: str) -> int | None:
