@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 """Tests for CLI."""
 
+import math
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -23,7 +24,7 @@ def test_parser_defaults():
 
     assert args.directory == Path.cwd()
     assert args.jobs == max(1, (os.cpu_count() or 1) // 2)
-    assert args.parallel == 2
+    assert args.parallel == "auto"
     assert args.dry_run is False
     assert args.verbose is False
 
@@ -276,3 +277,278 @@ def test_main_no_matching_jobs(mock_get_jobs, mock_check_docker, capsys):
     assert exit_code == 1
     captured = capsys.readouterr()
     assert "No jobs match" in captured.out
+
+
+# ── Auto-parallelism ─────────────────────────────────────────────────────────
+
+GIB = 1024**3
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(16 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(16 * GIB))
+def test_auto_parallelism_16gib(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """16 GiB Docker memory → floor(16/5.9) = 2."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["max_parallel"] == math.floor(16 / 5.9)
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(32 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(32 * GIB))
+def test_auto_parallelism_32gib(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """32 GiB Docker memory → floor(32/5.9) = 5."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["max_parallel"] == math.floor(32 / 5.9)
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(4 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(4 * GIB))
+def test_auto_parallelism_minimum_one(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """Below 5.9 GiB → parallelism clamped to 1."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["max_parallel"] == 1
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=None)
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(32 * GIB))
+def test_auto_parallelism_docker_unavailable(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """Falls back to 2 when Docker memory can't be queried."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["max_parallel"] == 2
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(8 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(64 * GIB))
+def test_auto_parallelism_warns_when_docker_memory_low(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker, capsys
+):
+    """Warns when Docker memory is well below 75% of system memory."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    captured = capsys.readouterr()
+    assert "Selected parallelism 1" in captured.err
+    assert "12 GiB" in captured.err  # 6 * 2
+    assert "increase available Docker memory" in captured.err
+
+
+@patch("beman_local_ci.cli.platform")
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(8 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(64 * GIB))
+def test_auto_parallelism_warning_includes_docker_desktop_on_macos(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker,
+    mock_platform, capsys,
+):
+    """Warning includes Docker Desktop navigation hint on macOS."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_platform.system.return_value = "Darwin"
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    captured = capsys.readouterr()
+    assert "Docker Desktop: Settings > Resources > Memory" in captured.err
+
+
+@patch("beman_local_ci.cli.platform")
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(8 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(64 * GIB))
+def test_auto_parallelism_warning_no_docker_desktop_on_linux(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker,
+    mock_platform, capsys,
+):
+    """Warning omits Docker Desktop hint on Linux."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_platform.system.return_value = "Linux"
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    captured = capsys.readouterr()
+    assert "increase available Docker memory" in captured.err
+    assert "Docker Desktop" not in captured.err
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(24 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(32 * GIB))
+def test_auto_parallelism_no_warning_when_close_to_system(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker, capsys
+):
+    """No warning when Docker memory is >= 75% of system memory."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    captured = capsys.readouterr()
+    assert "increase available Docker memory" not in captured.err
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(16 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(16 * GIB))
+def test_explicit_parallel_overrides_auto(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """Explicit -p value bypasses auto-detection."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run", "-p", "4"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["max_parallel"] == 4

@@ -2,6 +2,7 @@
 """Docker command construction and execution."""
 
 import json
+import os
 import platform
 import subprocess
 import tempfile
@@ -37,6 +38,30 @@ def check_docker() -> None:
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("Docker info command timed out. Is Docker daemon running?")
+
+
+def get_docker_memory_bytes() -> int | None:
+    """Return the total memory available to Docker, in bytes."""
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{.MemTotal}}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
+def get_system_memory_bytes() -> int | None:
+    """Return total physical memory in bytes (POSIX only)."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return None
 
 
 def _is_macos_arm64() -> bool:

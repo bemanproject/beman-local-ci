@@ -2,11 +2,17 @@
 """Command-line interface for beman-local-ci."""
 
 import argparse
+import math
 import os
+import platform
 import sys
 from pathlib import Path
 
-from beman_local_ci.lib.docker import check_docker
+from beman_local_ci.lib.docker import (
+    check_docker,
+    get_docker_memory_bytes,
+    get_system_memory_bytes,
+)
 from beman_local_ci.lib.filter import filter_jobs, parse_filter_args
 from beman_local_ci.lib.matrix import get_jobs_from_repo
 from beman_local_ci.lib.runner import run_jobs
@@ -58,9 +64,13 @@ Examples:
         help="Number of parallel build jobs (default: CPU count / 2)",
     )
 
-    def parallel_type(value: str) -> int | None:
+    _AUTO_PARALLEL = "auto"
+
+    def parallel_type(value: str) -> int | str | None:
         if value == "all":
             return None
+        if value == _AUTO_PARALLEL:
+            return _AUTO_PARALLEL
         try:
             n = int(value)
         except ValueError:
@@ -78,8 +88,8 @@ Examples:
         "--parallel",
         metavar="N",
         type=parallel_type,
-        default=2,
-        help="Maximum number of parallel CI jobs (default: 2, use 'all' for unlimited)",
+        default="auto",
+        help="Maximum number of parallel CI jobs (default: auto based on Docker memory, use 'all' for unlimited)",
     )
 
     parser.add_argument(
@@ -131,6 +141,37 @@ def main() -> int:
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
+
+    # Resolve auto-parallelism from Docker memory.
+    GIB = 1024**3
+    MEMORY_PER_CONTAINER_GIB = 5.9
+
+    if args.parallel == "auto":
+        docker_mem = get_docker_memory_bytes()
+        if docker_mem is not None:
+            parallelism = max(1, math.floor(docker_mem / (MEMORY_PER_CONTAINER_GIB * GIB)))
+            args.parallel = parallelism
+
+            system_mem = get_system_memory_bytes()
+            if system_mem is not None:
+                epsilon = 0.5 * GIB
+                if docker_mem < system_mem * 0.75 - epsilon:
+                    next_p = parallelism + 1
+                    needed_gib = next_p * 6
+                    msg = (
+                        f"Selected parallelism {parallelism} "
+                        f"(increase available Docker memory to "
+                        f"{needed_gib} GiB to increase default "
+                        f"parallelism to {next_p})."
+                    )
+                    if platform.system() == "Darwin":
+                        msg += (
+                            "\n  Docker Desktop: Settings > Resources"
+                            " > Memory"
+                        )
+                    print(msg, file=sys.stderr)
+        else:
+            args.parallel = 2  # fallback when Docker memory can't be queried
 
     # Parse filter arguments
     try:

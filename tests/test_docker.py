@@ -17,6 +17,8 @@ from beman_local_ci.lib.docker import (
     check_docker,
     create_build_dir,
     docker_image,
+    get_docker_memory_bytes,
+    get_system_memory_bytes,
 )
 from beman_local_ci.lib.matrix import CIJob
 
@@ -416,3 +418,40 @@ def test_build_docker_command_no_platform_on_linux(mock_is_macos):
     )
 
     assert "--platform" not in cmd
+
+
+# ── Docker / system memory queries ────────────────────────────────────────────
+
+
+@patch("subprocess.run")
+def test_get_docker_memory_bytes_success(mock_run):
+    """Returns parsed integer from docker info."""
+    mock_run.return_value = MagicMock(returncode=0, stdout="16777216000\n")
+    assert get_docker_memory_bytes() == 16777216000
+
+
+@patch("subprocess.run")
+def test_get_docker_memory_bytes_failure(mock_run):
+    """Returns None when docker info fails."""
+    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
+    assert get_docker_memory_bytes() is None
+
+
+@patch("subprocess.run")
+def test_get_docker_memory_bytes_exception(mock_run):
+    """Returns None on subprocess exception."""
+    mock_run.side_effect = Exception("timeout")
+    assert get_docker_memory_bytes() is None
+
+
+@patch("os.sysconf")
+def test_get_system_memory_bytes_success(mock_sysconf):
+    """Returns page_size * page_count."""
+    mock_sysconf.side_effect = lambda key: {"SC_PAGE_SIZE": 4096, "SC_PHYS_PAGES": 4194304}[key]
+    assert get_system_memory_bytes() == 4096 * 4194304
+
+
+@patch("os.sysconf", side_effect=OSError("unsupported"))
+def test_get_system_memory_bytes_oserror(mock_sysconf):
+    """Returns None when sysconf is unavailable."""
+    assert get_system_memory_bytes() is None
