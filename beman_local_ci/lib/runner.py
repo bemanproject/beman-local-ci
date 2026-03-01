@@ -355,6 +355,10 @@ def run_jobs(
         print("\nInterrupted — killing running containers...")
         executor.shutdown(wait=False, cancel_futures=True)
         _kill_all_containers()
+        # Wait for worker threads to finish now that containers are dead.
+        # Without this, the ThreadPoolExecutor atexit handler blocks on
+        # t.join() during interpreter shutdown, requiring a second Ctrl-C.
+        executor.shutdown(wait=True)
         return 130
 
     executor.shutdown(wait=False)
