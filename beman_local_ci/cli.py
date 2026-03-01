@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from beman_local_ci.lib.docker import (
+    check_build_cache_ownership,
     check_docker,
     get_docker_memory_bytes,
     get_system_memory_bytes,
@@ -194,6 +195,13 @@ def main() -> int:
     if args.jobs is None:
         nproc = os.cpu_count() or 1
         args.jobs = nproc if args.parallel == 1 else max(1, nproc // 2)
+
+    # Check build cache ownership
+    if not args.dry_run:
+        cache_err = check_build_cache_ownership()
+        if cache_err:
+            print(f"Error: {cache_err}", file=sys.stderr)
+            return 1
 
     # Parse filter arguments
     try:

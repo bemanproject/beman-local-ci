@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from beman_local_ci.lib.config import resolve_config
-from beman_local_ci.lib.docker import build_docker_command, create_build_dir
+from beman_local_ci.lib.docker import BUILD_CACHE_DIR, build_docker_command, create_build_dir
 from beman_local_ci.lib.matrix import CIJob
 
 # Thread-safe registry of (cidfile, Popen) for every container currently running.
@@ -296,6 +296,9 @@ def print_summary(results: list[JobResult]) -> None:
         for result in results:
             if not result.success:
                 print(f"  - {result.job}")
+        print(
+            f"\nNote: You can clear the build cache with: rm -rf {BUILD_CACHE_DIR}"
+        )
 
 
 def run_jobs(

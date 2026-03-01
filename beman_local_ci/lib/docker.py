@@ -210,6 +210,27 @@ def build_docker_command(
     return cmd
 
 
+BUILD_CACHE_DIR = Path(tempfile.gettempdir()) / "beman-local-ci"
+
+
+def check_build_cache_ownership() -> str | None:
+    """Check that the build cache dir is owned by the current user.
+
+    Returns None on success, or an error message string if the directory
+    exists and is owned by a different user.
+    """
+    if not BUILD_CACHE_DIR.exists():
+        return None
+    owner_uid = BUILD_CACHE_DIR.stat().st_uid
+    if owner_uid != os.getuid():
+        return (
+            f"Build cache directory {BUILD_CACHE_DIR} is owned by uid {owner_uid}, "
+            f"not the current user (uid {os.getuid()}).\n"
+            f"Fix with: sudo rm -rf {BUILD_CACHE_DIR}"
+        )
+    return None
+
+
 def create_build_dir(job: CIJob, base_dir: Path | None = None) -> Path:
     """
     Create a unique build directory for a job.
@@ -222,7 +243,7 @@ def create_build_dir(job: CIJob, base_dir: Path | None = None) -> Path:
         Path to the created build directory
     """
     if base_dir is None:
-        base_dir = Path(tempfile.gettempdir()) / "beman-local-ci"
+        base_dir = BUILD_CACHE_DIR
 
     base_dir.mkdir(parents=True, exist_ok=True)
 
