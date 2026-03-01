@@ -60,8 +60,8 @@ Examples:
         "--jobs",
         metavar="N",
         type=int,
-        default=max(1, (os.cpu_count() or 1) // 2),
-        help="Number of parallel build jobs (default: CPU count / 2)",
+        default=None,
+        help="Number of parallel build jobs (default: CPU count when -p 1, CPU count / 2 otherwise)",
     )
 
     _AUTO_PARALLEL = "auto"
@@ -183,6 +183,11 @@ def main() -> int:
                     print(msg, file=sys.stderr)
         else:
             args.parallel = 2  # fallback when Docker memory can't be queried
+
+    # Resolve -j default now that -p is known.
+    if args.jobs is None:
+        nproc = os.cpu_count() or 1
+        args.jobs = nproc if args.parallel == 1 else max(1, nproc // 2)
 
     # Parse filter arguments
     try:

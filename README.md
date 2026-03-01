@@ -27,7 +27,7 @@ beman-local-ci -C /path/to/repo -j 8 -p 4
 ## Options
 
 - `-C DIR`: Repository directory (default: current directory)
-- `-j N`: Build parallelism (default: CPU count / 2)
+- `-j N`: Build parallelism (default: CPU count when `-p 1`, CPU count / 2 otherwise)
 - `-p N`: Max parallel CI jobs (default: auto based on Docker memory, use `all` for unlimited)
 - `--dry-run`: Print commands without executing
 - `--verbose`: Show detailed output

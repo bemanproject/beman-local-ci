@@ -23,7 +23,7 @@ def test_parser_defaults():
     args, _ = parser.parse_known_args([])
 
     assert args.directory == Path.cwd()
-    assert args.jobs == max(1, (os.cpu_count() or 1) // 2)
+    assert args.jobs is None  # resolved after -p is known
     assert args.parallel == "auto"
     assert args.dry_run is False
     assert args.verbose is False
@@ -586,3 +586,153 @@ def test_explicit_parallel_overrides_auto(
 
     call_args = mock_run_jobs.call_args
     assert call_args.kwargs["max_parallel"] == 4
+
+
+# ── -j default depends on -p ─────────────────────────────────────────────────
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(4 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(4 * GIB))
+def test_jobs_default_nproc_when_parallel_one(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """-j defaults to full CPU count when -p resolves to 1."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["max_parallel"] == 1
+    assert call_args.kwargs["build_jobs"] == (os.cpu_count() or 1)
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(16 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(16 * GIB))
+def test_jobs_default_nproc_half_when_parallel_gt_one(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """-j defaults to CPU count / 2 when -p > 1."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["max_parallel"] == math.floor((16 + 0.5) / 5.9)
+    assert call_args.kwargs["build_jobs"] == max(1, (os.cpu_count() or 1) // 2)
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(16 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(16 * GIB))
+def test_jobs_default_nproc_half_when_explicit_parallel_gt_one(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """-j defaults to CPU count / 2 when user passes -p 2."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run", "-p", "2"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["build_jobs"] == max(1, (os.cpu_count() or 1) // 2)
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(16 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(16 * GIB))
+def test_jobs_default_nproc_when_explicit_parallel_one(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """-j defaults to full CPU count when user passes -p 1."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run", "-p", "1"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["build_jobs"] == (os.cpu_count() or 1)
+
+
+@patch("beman_local_ci.cli.check_docker")
+@patch("beman_local_ci.cli.get_jobs_from_repo")
+@patch("beman_local_ci.cli.run_jobs")
+@patch("beman_local_ci.cli.get_docker_memory_bytes", return_value=int(16 * GIB))
+@patch("beman_local_ci.cli.get_system_memory_bytes", return_value=int(16 * GIB))
+def test_explicit_jobs_not_overridden(
+    mock_sys_mem, mock_docker_mem, mock_run_jobs, mock_get_jobs, mock_check_docker
+):
+    """Explicit -j is never overridden regardless of -p."""
+    from beman_local_ci.lib.matrix import CIJob
+
+    mock_check_docker.return_value = None
+    mock_get_jobs.return_value = [
+        CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
+    ]
+    mock_run_jobs.return_value = 0
+
+    with patch(
+        "sys.argv",
+        ["beman-local-ci", "-C", "/workspace/beman-submodules/exemplar", "--dry-run", "-p", "1", "-j", "4"],
+    ):
+        if not Path("/workspace/beman-submodules/exemplar").exists():
+            pytest.skip("Exemplar repo not available")
+        main()
+
+    call_args = mock_run_jobs.call_args
+    assert call_args.kwargs["build_jobs"] == 4
