@@ -161,14 +161,20 @@ def main() -> int:
             if system_mem is not None:
                 epsilon = 0.5 * GIB
                 if docker_mem < system_mem * 0.75 - epsilon:
-                    next_p = parallelism + 1
-                    needed_gib = next_p * 6
-                    msg = (
-                        f"Selected parallelism {parallelism} "
-                        f"(increase available Docker memory to "
-                        f"{needed_gib} GiB to increase default "
-                        f"parallelism to {next_p})."
-                    )
+                    # Suggest the highest parallelism reachable within
+                    # 75% of system memory.
+                    system_gib = system_mem / GIB
+                    best_p = math.floor((system_gib * 0.75 + DOCKER_OVERHEAD_GIB) / MEMORY_PER_CONTAINER_GIB)
+                    if best_p > parallelism:
+                        needed_gib = best_p * 6
+                        msg = (
+                            f"Selected parallelism {parallelism} "
+                            f"(increase available Docker memory to "
+                            f"{needed_gib} GiB to increase default "
+                            f"parallelism to {best_p})."
+                        )
+                    else:
+                        msg = f"Selected parallelism {parallelism}."
                     if platform.system() == "Darwin":
                         msg += (
                             "\n  Docker Desktop: Settings > Resources"

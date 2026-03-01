@@ -459,7 +459,9 @@ def test_auto_parallelism_warns_when_docker_memory_low(
 
     captured = capsys.readouterr()
     assert "Selected parallelism 1" in captured.err
-    assert "12 GiB" in captured.err  # 6 * 2
+    # best_p = floor((64*0.75 + 0.5) / 5.9) = 8, needed = 8 * 6 = 48
+    assert "48 GiB" in captured.err
+    assert "parallelism to 8" in captured.err
     assert "increase available Docker memory" in captured.err
 
 
