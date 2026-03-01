@@ -138,7 +138,7 @@ cmake --build /build --config {resolved.build_config} --parallel {jobs} --verbos
 echo "::step::header_sets"
 cmake --build /build --config {resolved.build_config} --target all_verify_interface_header_sets
 echo "::step::install"
-cmake --install /build --config {resolved.build_config} --prefix /opt/beman.package
+cmake --install /build --config {resolved.build_config} --prefix /build/stagedir
 echo "::step::test"
 ctest --test-dir /build --build-config {resolved.build_config} --output-on-failure
 echo "::step::done"

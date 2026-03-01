@@ -60,7 +60,7 @@ cmake --build /build --config Debug --parallel 32 --verbose
 echo "::step::header_sets"
 cmake --build /build --config Debug --target all_verify_interface_header_sets
 echo "::step::install"
-cmake --install /build --config Debug --prefix /opt/beman.package
+cmake --install /build --config Debug --prefix /build/stagedir
 echo "::step::test"
 ctest --test-dir /build --build-config Debug --output-on-failure
 echo "::step::done"'
