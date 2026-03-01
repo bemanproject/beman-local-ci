@@ -252,12 +252,15 @@ def check_build_cache_ownership() -> str | None:
     return None
 
 
-def create_build_dir(job: CIJob, base_dir: Path | None = None) -> Path:
+def create_build_dir(
+    job: CIJob, repo_name: str, base_dir: Path | None = None
+) -> Path:
     """
     Create a unique build directory for a job.
 
     Args:
         job: The CI job
+        repo_name: Repository/project name (used as directory prefix)
         base_dir: Base directory for build dirs (default: system temp)
 
     Returns:
@@ -268,9 +271,9 @@ def create_build_dir(job: CIJob, base_dir: Path | None = None) -> Path:
 
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create unique dir name from job parameters
+    # Create unique dir name from repo + job parameters
     # Use sanitized names (replace special chars)
-    job_name = f"{job.compiler}-{job.version}-{job.cxxversion}-{job.stdlib}-{job.test}"
+    job_name = f"{repo_name}-{job.compiler}-{job.version}-{job.cxxversion}-{job.stdlib}-{job.test}"
     job_name = job_name.replace("/", "_").replace(" ", "_").replace(":", "_")
 
     build_dir = base_dir / job_name

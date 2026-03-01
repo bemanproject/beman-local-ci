@@ -154,7 +154,7 @@ def run_job(
         JobResult with execution details
     """
     resolved = resolve_config(job)
-    build_dir = create_build_dir(job)
+    build_dir = create_build_dir(job, repo_name=repo_path.name)
 
     cmd = build_docker_command(job, resolved, repo_path, build_jobs, build_dir)
 

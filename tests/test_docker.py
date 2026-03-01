@@ -160,9 +160,10 @@ def test_create_build_dir_default():
     """Test creating build directory with default base."""
     job = CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
 
-    build_dir = create_build_dir(job)
+    build_dir = create_build_dir(job, repo_name="exemplar")
 
     assert build_dir.exists()
+    assert "exemplar" in str(build_dir)
     assert "gcc" in str(build_dir)
     assert "15" in str(build_dir)
     assert build_dir.is_dir()
@@ -176,10 +177,11 @@ def test_create_build_dir_custom_base():
     job = CIJob("clang", "21", "c++26", "libc++", "Release.TSan")
     base_dir = Path(tempfile.mkdtemp())
 
-    build_dir = create_build_dir(job, base_dir=base_dir)
+    build_dir = create_build_dir(job, repo_name="execution", base_dir=base_dir)
 
     assert build_dir.exists()
     assert build_dir.parent == base_dir
+    assert "execution" in str(build_dir)
     assert "clang" in str(build_dir)
     assert "21" in str(build_dir)
 
@@ -193,7 +195,7 @@ def test_create_build_dir_sanitizes_name():
     job = CIJob("gcc", "trunk", "c++26", "libstdc++", "Debug.-DFOO=ON")
     base_dir = Path(tempfile.mkdtemp())
 
-    build_dir = create_build_dir(job, base_dir=base_dir)
+    build_dir = create_build_dir(job, repo_name="exemplar", base_dir=base_dir)
 
     # Should not contain special characters that could cause issues
     assert "/" not in build_dir.name
@@ -211,8 +213,8 @@ def test_create_build_dir_idempotent():
     job = CIJob("gcc", "15", "c++26", "libstdc++", "Debug.Default")
     base_dir = Path(tempfile.mkdtemp())
 
-    build_dir1 = create_build_dir(job, base_dir=base_dir)
-    build_dir2 = create_build_dir(job, base_dir=base_dir)
+    build_dir1 = create_build_dir(job, repo_name="exemplar", base_dir=base_dir)
+    build_dir2 = create_build_dir(job, repo_name="exemplar", base_dir=base_dir)
 
     assert build_dir1 == build_dir2
     assert build_dir1.exists()
