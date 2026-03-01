@@ -23,7 +23,7 @@ def test_parser_defaults():
 
     assert args.directory == Path.cwd()
     assert args.jobs == os.cpu_count()
-    assert args.parallel is None
+    assert args.parallel == 2
     assert args.dry_run is False
     assert args.verbose is False
 
@@ -59,6 +59,12 @@ def test_parser_parallel():
 
     args, _ = parser.parse_known_args(["--parallel", "2"])
     assert args.parallel == 2
+
+    args, _ = parser.parse_known_args(["-p", "all"])
+    assert args.parallel is None
+
+    args, _ = parser.parse_known_args(["--parallel", "all"])
+    assert args.parallel is None
 
 
 def test_parser_dry_run():

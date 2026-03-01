@@ -58,13 +58,28 @@ Examples:
         help="Number of parallel build jobs (default: CPU count)",
     )
 
+    def parallel_type(value: str) -> int | None:
+        if value == "all":
+            return None
+        try:
+            n = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"invalid value '{value}': expected a positive integer or 'all'"
+            )
+        if n < 1:
+            raise argparse.ArgumentTypeError(
+                f"invalid value '{value}': must be at least 1"
+            )
+        return n
+
     parser.add_argument(
         "-p",
         "--parallel",
         metavar="N",
-        type=int,
-        default=None,
-        help="Maximum number of parallel CI jobs (default: unlimited)",
+        type=parallel_type,
+        default=2,
+        help="Maximum number of parallel CI jobs (default: 2, use 'all' for unlimited)",
     )
 
     parser.add_argument(
