@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 """Tests for Docker command construction."""
 
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,8 @@ import pytest
 
 from beman_local_ci.lib.config import ResolvedConfig
 from beman_local_ci.lib.docker import (
+    _image_has_arm64,
+    _is_macos_arm64,
     build_docker_command,
     build_docker_script,
     check_docker,
@@ -250,3 +253,166 @@ def test_check_docker_timeout(mock_run):
 
     with pytest.raises(RuntimeError, match="timed out"):
         check_docker()
+
+
+# ── macOS arm64 / platform detection ─────────────────────────────────────────
+
+
+@patch("platform.system", return_value="Darwin")
+@patch("platform.machine", return_value="arm64")
+def test_is_macos_arm64_true(mock_machine, mock_system):
+    """Detects macOS Apple Silicon correctly."""
+    assert _is_macos_arm64() is True
+
+
+@patch("platform.system", return_value="Linux")
+@patch("platform.machine", return_value="aarch64")
+def test_is_macos_arm64_false_linux(mock_machine, mock_system):
+    """Returns False on Linux arm64."""
+    assert _is_macos_arm64() is False
+
+
+@patch("platform.system", return_value="Darwin")
+@patch("platform.machine", return_value="x86_64")
+def test_is_macos_arm64_false_intel_mac(mock_machine, mock_system):
+    """Returns False on Intel Mac."""
+    assert _is_macos_arm64() is False
+
+
+_MULTIARCH_MANIFEST = json.dumps(
+    {
+        "schemaVersion": 2,
+        "manifests": [
+            {"platform": {"architecture": "amd64", "os": "linux"}},
+            {"platform": {"architecture": "arm64", "os": "linux"}},
+        ],
+    }
+)
+
+_AMD64_ONLY_MANIFEST = json.dumps(
+    {
+        "schemaVersion": 2,
+        "manifests": [
+            {"platform": {"architecture": "amd64", "os": "linux"}},
+        ],
+    }
+)
+
+_SINGLE_ARCH_MANIFEST = json.dumps(
+    {
+        "schemaVersion": 2,
+        "config": {"mediaType": "application/vnd.oci.image.config.v1+json"},
+    }
+)
+
+
+@patch("subprocess.run")
+def test_image_has_arm64_multiarch(mock_run):
+    """Returns True when manifest list contains arm64."""
+    _image_has_arm64.cache_clear()
+    mock_run.return_value = MagicMock(returncode=0, stdout=_MULTIARCH_MANIFEST)
+    assert _image_has_arm64("ghcr.io/bemanproject/infra-containers-clang:21") is True
+    _image_has_arm64.cache_clear()
+
+
+@patch("subprocess.run")
+def test_image_has_arm64_amd64_only(mock_run):
+    """Returns False when manifest list has no arm64 entry."""
+    _image_has_arm64.cache_clear()
+    mock_run.return_value = MagicMock(returncode=0, stdout=_AMD64_ONLY_MANIFEST)
+    assert _image_has_arm64("ghcr.io/bemanproject/infra-containers-clang:18") is False
+    _image_has_arm64.cache_clear()
+
+
+@patch("subprocess.run")
+def test_image_has_arm64_single_arch_manifest(mock_run):
+    """Returns True for single-arch manifest (no manifests array)."""
+    _image_has_arm64.cache_clear()
+    mock_run.return_value = MagicMock(returncode=0, stdout=_SINGLE_ARCH_MANIFEST)
+    assert _image_has_arm64("ghcr.io/bemanproject/infra-containers-gcc:15") is True
+    _image_has_arm64.cache_clear()
+
+
+@patch("subprocess.run")
+def test_image_has_arm64_inspect_fails(mock_run):
+    """Returns True (safe default) when manifest inspect fails."""
+    _image_has_arm64.cache_clear()
+    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="not found")
+    assert _image_has_arm64("ghcr.io/bemanproject/infra-containers-clang:18") is True
+    _image_has_arm64.cache_clear()
+
+
+@patch("subprocess.run")
+def test_image_has_arm64_exception(mock_run):
+    """Returns True (safe default) when subprocess raises."""
+    _image_has_arm64.cache_clear()
+    mock_run.side_effect = Exception("network error")
+    assert _image_has_arm64("ghcr.io/bemanproject/infra-containers-clang:18") is True
+    _image_has_arm64.cache_clear()
+
+
+@patch("beman_local_ci.lib.docker._is_macos_arm64", return_value=True)
+@patch(
+    "beman_local_ci.lib.docker._image_has_arm64",
+    return_value=False,
+)
+def test_build_docker_command_adds_platform_on_macos_amd64_only(
+    mock_has_arm64, mock_is_macos
+):
+    """--platform linux/amd64 is injected on macOS arm64 for amd64-only images."""
+    job = CIJob("clang", "18", "c++26", "libc++", "Debug.Default")
+    config = ResolvedConfig(
+        build_config="Debug",
+        cmake_extra_args="",
+        toolchain_file="infra/cmake/llvm-libc++-toolchain.cmake",
+        cpp_version="26",
+    )
+    cmd = build_docker_command(
+        job, config, Path("/repo"), jobs=4, build_dir=Path("/build")
+    )
+
+    assert "--platform" in cmd
+    platform_idx = cmd.index("--platform")
+    assert cmd[platform_idx + 1] == "linux/amd64"
+
+
+@patch("beman_local_ci.lib.docker._is_macos_arm64", return_value=True)
+@patch(
+    "beman_local_ci.lib.docker._image_has_arm64",
+    return_value=True,
+)
+def test_build_docker_command_arm64_platform_on_macos_multiarch(
+    mock_has_arm64, mock_is_macos
+):
+    """--platform linux/arm64 is injected on macOS arm64 for arm64-capable images."""
+    job = CIJob("clang", "21", "c++26", "libc++", "Debug.Default")
+    config = ResolvedConfig(
+        build_config="Debug",
+        cmake_extra_args="",
+        toolchain_file="infra/cmake/llvm-libc++-toolchain.cmake",
+        cpp_version="26",
+    )
+    cmd = build_docker_command(
+        job, config, Path("/repo"), jobs=4, build_dir=Path("/build")
+    )
+
+    assert "--platform" in cmd
+    platform_idx = cmd.index("--platform")
+    assert cmd[platform_idx + 1] == "linux/arm64"
+
+
+@patch("beman_local_ci.lib.docker._is_macos_arm64", return_value=False)
+def test_build_docker_command_no_platform_on_linux(mock_is_macos):
+    """--platform is never injected on Linux regardless of image manifest."""
+    job = CIJob("clang", "18", "c++26", "libc++", "Debug.Default")
+    config = ResolvedConfig(
+        build_config="Debug",
+        cmake_extra_args="",
+        toolchain_file="infra/cmake/llvm-libc++-toolchain.cmake",
+        cpp_version="26",
+    )
+    cmd = build_docker_command(
+        job, config, Path("/repo"), jobs=4, build_dir=Path("/build")
+    )
+
+    assert "--platform" not in cmd
