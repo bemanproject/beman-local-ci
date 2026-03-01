@@ -112,6 +112,7 @@ def run_job(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            start_new_session=True,
         )
 
         with _active_procs_lock:
