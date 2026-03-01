@@ -214,20 +214,41 @@ BUILD_CACHE_DIR = Path(tempfile.gettempdir()) / "beman-local-ci"
 
 
 def check_build_cache_ownership() -> str | None:
-    """Check that the build cache dir is owned by the current user.
+    """Check that the build cache dir has no root-owned files.
 
-    Returns None on success, or an error message string if the directory
-    exists and is owned by a different user.
+    Scans up to two levels deep (the job dirs and their immediate children)
+    to detect root-owned entries without walking the entire tree.
+
+    Returns None on success, or an error message string if any
+    root-owned entry is found.
     """
     if not BUILD_CACHE_DIR.exists():
         return None
-    owner_uid = BUILD_CACHE_DIR.stat().st_uid
-    if owner_uid != os.getuid():
-        return (
-            f"Build cache directory {BUILD_CACHE_DIR} is owned by uid {owner_uid}, "
-            f"not the current user (uid {os.getuid()}).\n"
-            f"Fix with: sudo rm -rf {BUILD_CACHE_DIR}"
-        )
+
+    uid = os.getuid()
+    root_uid = 0
+
+    # Check the top-level dir itself, then job dirs (depth 1) and their
+    # immediate children (depth 2).
+    dirs_to_scan = [BUILD_CACHE_DIR]
+    for depth, parent in enumerate(dirs_to_scan):
+        try:
+            for entry in parent.iterdir():
+                try:
+                    if entry.stat().st_uid == root_uid and root_uid != uid:
+                        return (
+                            f"Build cache contains root-owned files "
+                            f"(e.g. {entry}).\n"
+                            f"Fix with: sudo rm -rf {BUILD_CACHE_DIR}"
+                        )
+                    # Queue job dirs (depth 0→1) for one more level of scanning.
+                    if depth == 0 and entry.is_dir():
+                        dirs_to_scan.append(entry)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
     return None
 
 
