@@ -12,13 +12,13 @@ uv pip install -e .
 
 ```bash
 # Run all jobs for a repository
-beman-local-ci -C /path/to/repo
+uv run beman-local-ci -C /path/to/repo
 
 # Dry run to see what would be executed
-beman-local-ci -C /path/to/repo --dry-run
+uv run beman-local-ci -C /path/to/repo --dry-run
 
 # Control parallelism
-beman-local-ci -C /path/to/repo -j 8 -p 4
+uv run beman-local-ci -C /path/to/repo -j 8 -p 4
 ```
 
 ## Options
