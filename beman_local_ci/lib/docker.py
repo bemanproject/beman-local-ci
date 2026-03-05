@@ -5,7 +5,9 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import tempfile
+import urllib.request
 from functools import cache
 from pathlib import Path
 
@@ -188,6 +190,15 @@ def build_docker_command(
             else ["--platform", "linux/amd64"]
         )
 
+    # TSan needs the personality syscall to disable ASLR.
+    seccomp_args: list[str] = []
+    if ".TSan" in job.test:
+        profile_path = _get_tsan_seccomp_profile()
+        if profile_path is not None:
+            seccomp_args = ["--security-opt", f"seccomp={profile_path}"]
+        else:
+            seccomp_args = ["--security-opt", "seccomp=unconfined"]
+
     cmd = [
         "docker",
         "run",
@@ -195,6 +206,7 @@ def build_docker_command(
         "--user",
         f"{os.getuid()}:{os.getgid()}",
         *platform_args,
+        *seccomp_args,
         "-v",
         f"{repo_path}:/src:ro",
         "-v",
@@ -208,6 +220,46 @@ def build_docker_command(
     ]
 
     return cmd
+
+
+_MOBY_DEFAULT_SECCOMP_URL = (
+    "https://raw.githubusercontent.com/moby/moby/master/"
+    "vendor/github.com/moby/profiles/seccomp/default.json"
+)
+
+
+@cache
+def _get_tsan_seccomp_profile() -> Path | None:
+    """Build a seccomp profile that allows the personality syscall.
+
+    TSan needs ``personality(old | ADDR_NO_RANDOMIZE)`` to disable ASLR.
+    Docker's default profile only allows ``personality(0)`` (query).
+
+    Fetches Docker's default profile from the moby repo, replaces every
+    arg-restricted ``personality`` entry with an unrestricted allow, and
+    writes the result to a temp file.  Returns the path, or None on failure.
+    """
+    try:
+        req = urllib.request.Request(_MOBY_DEFAULT_SECCOMP_URL, method="GET")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            profile = json.loads(resp.read())
+    except Exception as e:
+        print(
+            f"Warning: could not fetch default seccomp profile ({e}); "
+            "TSan jobs will run with --security-opt seccomp=unconfined",
+            file=sys.stderr,
+        )
+        return None
+
+    # Replace all personality entries with a single unrestricted allow.
+    profile["syscalls"] = [
+        s for s in profile["syscalls"] if "personality" not in s["names"]
+    ]
+    profile["syscalls"].append({"names": ["personality"], "action": "SCMP_ACT_ALLOW"})
+
+    out = Path(tempfile.gettempdir()) / "beman-local-ci-seccomp-tsan.json"
+    out.write_text(json.dumps(profile))
+    return out
 
 
 BUILD_CACHE_DIR = Path(tempfile.gettempdir()) / "beman-local-ci"
