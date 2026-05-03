@@ -138,7 +138,17 @@ cmake -B /build -S /src \\
 echo "::step::build"
 cmake --build /build --config {resolved.build_config} --parallel {jobs} --verbose
 echo "::step::header_sets"
-cmake --build /build --config {resolved.build_config} --target all_verify_interface_header_sets
+# all_verify_interface_header_sets only exists when at least one target sets
+# VERIFY_INTERFACE_HEADER_SETS; modules-only configurations legitimately have
+# nothing to verify. Treat ninja's "unknown target" as a skip, not a failure.
+verify_log=$(mktemp)
+if cmake --build /build --config {resolved.build_config} --target all_verify_interface_header_sets 2>&1 | tee "$verify_log"; then
+  :
+elif grep -q "unknown target.*all_verify_interface_header_sets" "$verify_log"; then
+  echo "No interface header sets to verify in this configuration; skipping."
+else
+  exit 1
+fi
 echo "::step::install"
 cmake --install /build --config {resolved.build_config} --prefix /build/stagedir
 echo "::step::test"

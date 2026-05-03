@@ -58,7 +58,14 @@ cmake -B /build -S /src \
 echo "::step::build"
 cmake --build /build --config Debug --parallel 32 --verbose
 echo "::step::header_sets"
-cmake --build /build --config Debug --target all_verify_interface_header_sets
+verify_log=$(mktemp)
+if cmake --build /build --config Debug --target all_verify_interface_header_sets 2>&1 | tee "$verify_log"; then
+  :
+elif grep -q "unknown target.*all_verify_interface_header_sets" "$verify_log"; then
+  echo "No interface header sets to verify in this configuration; skipping."
+else
+  exit 1
+fi
 echo "::step::install"
 cmake --install /build --config Debug --prefix /build/stagedir
 echo "::step::test"
