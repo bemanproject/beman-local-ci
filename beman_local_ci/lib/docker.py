@@ -222,7 +222,7 @@ def build_docker_command(
         "-v",
         f"{build_dir}:/build",
         "-e",
-        "CMAKE_GENERATOR=Ninja Multi-Config",
+        "CMAKE_GENERATOR=Ninja",
         image,
         "bash",
         "-c",
