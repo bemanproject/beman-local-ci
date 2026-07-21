@@ -233,7 +233,7 @@ def test_check_docker_success(mock_run):
     check_docker()
 
     mock_run.assert_called_once()
-    assert mock_run.call_args[0][0] == ["docker", "info"]
+    assert mock_run.call_args[0][0] == ["docker", "info", "--format", "json"]
 
 
 @patch("subprocess.run")

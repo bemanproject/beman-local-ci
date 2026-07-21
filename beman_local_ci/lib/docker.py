@@ -23,7 +23,7 @@ def check_docker() -> None:
     """
     try:
         result = subprocess.run(
-            ["docker", "info"],
+            ["docker", "info", "--format", "json"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -46,7 +46,7 @@ def get_docker_memory_bytes() -> int | None:
     """Return the total memory available to Docker, in bytes."""
     try:
         result = subprocess.run(
-            ["docker", "info", "--format", "{{.MemTotal}}"],
+            ["docker", "info", "--format", "{{json .MemTotal}}"],
             capture_output=True,
             text=True,
             timeout=5,
