@@ -184,7 +184,7 @@ def run_job(
     cmd = cmd[: rm_idx + 1] + ["--cidfile", str(cidfile)] + cmd[rm_idx + 1 :]
 
     start_time = time.time()
-    proc: "subprocess.Popen[str] | None" = None
+    proc: subprocess.Popen[str] | None = None
     collector: _StatsCollector | None = None
 
     try:

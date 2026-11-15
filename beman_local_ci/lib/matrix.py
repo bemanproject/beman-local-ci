@@ -2,9 +2,9 @@
 """Matrix expansion logic for Beman CI configurations."""
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import yaml
 
